@@ -1,0 +1,94 @@
+name: docker-ghcr
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOCKERFILE_PATH: ./Dockerfile
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compute build metadata
+        id: vars
+        run: |
+          REF_NAME="${GITHUB_REF##*/}"
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            PR_SHA="$(jq -r '.pull_request.head.sha' "${GITHUB_EVENT_PATH}")"
+            SHA="${PR_SHA:0:7}"
+          else
+            SHA="$(git rev-parse --short=7 HEAD)"
+          fi
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          REPO_SLUG="$(printf '%s' "${REPO_NAME}" | tr '[:upper:]' '[:lower:]')"
+          REPO_SLUG="$(echo "${REPO_SLUG}" | sed -E 's/[^a-z0-9]+/-/g' | sed -E 's/^-+|-+$//g')"
+          OWNER_SLUG="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          OWNER_SLUG="$(echo "${OWNER_SLUG}" | sed -E 's/[^a-z0-9]+/-/g' | sed -E 's/^-+|-+$//g')"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "repo_slug=${REPO_SLUG}" >> "$GITHUB_OUTPUT"
+          echo "owner_slug=${OWNER_SLUG}" >> "$GITHUB_OUTPUT"
+          echo "image_name_base=ghcr.io/${OWNER_SLUG}/${REPO_SLUG}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "semver=${REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.vars.outputs.image_name_base }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=sha-${{ steps.vars.outputs.sha }}
+            type=ref,event=tag
+          labels: |
+            org.opencontainers.image.title=${{ github.repository }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp || github.event.pull_request.updated_at }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE_PATH }}
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Echo resulting tags
+        if: ${{ github.event_name != 'pull_request' }}
+        run: echo "${{ steps.meta.outputs.tags }}"

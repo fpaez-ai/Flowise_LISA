@@ -1,10 +1,46 @@
+# VCS & metadata
+.git
+.gitignore
+.gitattributes
+.github
+.husky
+
+# Dependencies & caches
 node_modules
-dist
-build
-
 **/node_modules
-**/build
-**/dist
+.pnpm-store
+.npm
+.yarn
+.pnp*
+.pnpm-debug.log
 
+# Build artifacts
+build
+**/build
+dist
+**/dist
+out
+.turbo
+.cache
+
+# Tests and QA assets
+coverage
+**/coverage
+cypress
+**/cypress
+__tests__
+**/__tests__
+*.test.*
+artillery-load-test.yml
+
+# Temporary files
+*.log
+*.tmp
+*.swp
+tmp
+temp
+.DS_Store
+
+# Environment secrets
 packages/server/.env
 packages/ui/.env
