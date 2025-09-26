@@ -33,6 +33,9 @@ RUN pnpm install
 
 RUN pnpm build
 
+RUN printf '#!/bin/sh\nexec pnpm "$@"\n' > /usr/local/bin/flowise \
+    && chmod +x /usr/local/bin/flowise
+
 EXPOSE 3000
 
-CMD [ "pnpm", "start" ]
+CMD [ "flowise", "start" ]
