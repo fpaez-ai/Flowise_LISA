@@ -83,6 +83,8 @@ interface IProcessNodeOutputsParams {
     nodeExecutionQueue: INodeQueue[]
     waitingNodes: Map<string, IWaitingNode>
     loopCounts: Map<string, number>
+    sseStreamer?: IServerSideEventStreamer
+    chatId: string
     abortController?: AbortController
 }
 
@@ -287,6 +289,20 @@ export const resolveVariables = async (
 
             if (variableFullPath === CURRENT_DATE_TIME_VAR_PREFIX) {
                 resolvedValue = resolvedValue.replace(match, new Date().toISOString())
+            }
+
+            if (variableFullPath === 'loop_count') {
+                const loopCountValue = flowConfig?.state?.loop_count
+
+                if (loopCountValue != null) {
+                    const loopCountString = loopCountValue.toString()
+
+                    if (resolvedValue === match) {
+                        resolvedValue = loopCountString
+                    } else {
+                        resolvedValue = resolvedValue.replace(match, loopCountString)
+                    }
+                }
             }
 
             if (variableFullPath.startsWith('$iteration')) {
@@ -742,7 +758,9 @@ async function processNodeOutputs({
     edges,
     nodeExecutionQueue,
     waitingNodes,
-    loopCounts
+    loopCounts,
+    sseStreamer,
+    chatId
 }: IProcessNodeOutputsParams): Promise<{ humanInput?: IHumanInput }> {
     logger.debug(`\n🔄 Processing outputs from node: ${nodeId}`)
 
@@ -807,6 +825,19 @@ async function processNodeOutputs({
         const loopCount = (loopCounts.get(nodeId) || 0) + 1
         const maxLoop = result.output.maxLoopCount || MAX_LOOP_COUNT
 
+        if (result.state && typeof result.state === 'object') {
+            result.state.loop_count = loopCount
+        } else {
+            result.state = { loop_count: loopCount }
+        }
+
+        result.output.loopCount = loopCount
+
+        const applyLoopCountTemplate = (message?: string) => {
+            if (!message) return message
+            return message.replace(/{{\s*loop_count\s*}}/gi, loopCount.toString())
+        }
+
         if (loopCount < maxLoop) {
             logger.debug(`    Loop count: ${loopCount}/${maxLoop}`)
             loopCounts.set(nodeId, loopCount)
@@ -823,6 +854,21 @@ async function processNodeOutputs({
             }
         } else {
             logger.debug(`    ⚠️ Maximum loop count (${maxLoop}) reached, stopping loop`)
+            loopCounts.set(nodeId, loopCount)
+
+            const fallbackMessageTemplate = typeof result.output.fallbackMessage === 'string' ? result.output.fallbackMessage : undefined
+            const fallbackMessage =
+                applyLoopCountTemplate(fallbackMessageTemplate) || `Loop completed after reaching maximum iteration count of ${maxLoop}.`
+
+            if (sseStreamer) {
+                sseStreamer.streamTokenEvent(chatId, fallbackMessage)
+            }
+
+            result.output = {
+                ...result.output,
+                content: fallbackMessage,
+                fallbackMessage
+            }
         }
     }
 
@@ -1957,6 +2003,8 @@ export const executeAgentFlow = async ({
                 nodeExecutionQueue,
                 waitingNodes,
                 loopCounts,
+                sseStreamer,
+                chatId,
                 abortController
             })
 

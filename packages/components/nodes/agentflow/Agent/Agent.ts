@@ -392,6 +392,29 @@ class Agent_Agentflow implements INode {
         ]
     }
 
+    private sanitizeMessageName(name?: string): string {
+        if (!name || typeof name !== 'string') return ''
+        const cleaned = name
+            .toLowerCase()
+            .trim()
+            .replace(/[\s<>|/]/g, '_')
+            .replace(/_+/g, '_')
+        return cleaned.substring(0, 64)
+    }
+
+    private sanitizeMessages(messages: BaseMessageLike[]): void {
+        for (const message of messages) {
+            if (message && typeof message === 'object' && 'name' in message) {
+                const sanitizedName = this.sanitizeMessageName((message as any).name)
+                if (!sanitizedName) {
+                    delete (message as any).name
+                } else {
+                    ;(message as any).name = sanitizedName
+                }
+            }
+        }
+    }
+
     //@ts-ignore
     loadMethods = {
         async listModels(_: INodeData, options: ICommonObject): Promise<INodeOptionsValue[]> {
@@ -901,6 +924,8 @@ class Agent_Agentflow implements INode {
             // Get initial response from LLM
             const sseStreamer: IServerSideEventStreamer | undefined = options.sseStreamer
 
+            this.sanitizeMessages(messages)
+
             // Handle tool calls with support for recursion
             let usedTools: IUsedTool[] = []
             let sourceDocuments: Array<any> = []
@@ -1182,7 +1207,7 @@ class Agent_Agentflow implements INode {
                     {
                         role: returnRole,
                         content: finalResponse,
-                        name: nodeData?.label ? nodeData?.label.toLowerCase().replace(/\s/g, '_').trim() : nodeData?.id,
+                        name: this.sanitizeMessageName(nodeData?.label || nodeData?.id),
                         ...(((artifacts && artifacts.length > 0) ||
                             (fileAnnotations && fileAnnotations.length > 0) ||
                             (usedTools && usedTools.length > 0)) && {
@@ -1829,6 +1854,8 @@ class Agent_Agentflow implements INode {
         // Get LLM response after tool calls
         let newResponse: AIMessageChunk
 
+        this.sanitizeMessages(messages)
+
         if (isStreamable) {
             newResponse = await this.handleStreamingResponse(sseStreamer, llmNodeInstance, messages, chatId, abortController)
         } else {
@@ -2125,6 +2152,8 @@ class Agent_Agentflow implements INode {
             // @ts-ignore
             llmNodeInstance = llmNodeInstance.bindTools(toolsInstance)
         }
+
+        this.sanitizeMessages(messages)
 
         if (isStreamable) {
             newResponse = await this.handleStreamingResponse(sseStreamer, llmNodeInstance, messages, chatId, abortController)

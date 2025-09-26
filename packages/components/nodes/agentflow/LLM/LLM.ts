@@ -14,6 +14,16 @@ import {
 } from '../utils'
 import { processTemplateVariables } from '../../../src/utils'
 
+const sanitizeMessageName = (name?: string): string => {
+    if (!name || typeof name !== 'string') return ''
+    const cleaned = name
+        .toLowerCase()
+        .trim()
+        .replace(/[\s<>|/]/g, '_')
+        .replace(/_+/g, '_')
+    return cleaned.substring(0, 64)
+}
+
 class LLM_Agentflow implements INode {
     label: string
     name: string
@@ -470,6 +480,17 @@ class LLM_Agentflow implements INode {
 
             const sseStreamer: IServerSideEventStreamer | undefined = options.sseStreamer
 
+            for (const message of messages) {
+                if (message && typeof message === 'object' && 'name' in message) {
+                    const sanitizedName = sanitizeMessageName((message as any).name)
+                    if (!sanitizedName) {
+                        delete (message as any).name
+                    } else {
+                        ;(message as any).name = sanitizedName
+                    }
+                }
+            }
+
             if (isStreamable) {
                 response = await this.handleStreamingResponse(sseStreamer, llmNodeInstance, messages, chatId, abortController)
             } else {
@@ -584,7 +605,7 @@ class LLM_Agentflow implements INode {
                     {
                         role: returnRole,
                         content: finalResponse,
-                        name: nodeData?.label ? nodeData?.label.toLowerCase().replace(/\s/g, '_').trim() : nodeData?.id
+                        name: sanitizeMessageName(nodeData?.label || nodeData?.id)
                     }
                 ]
             }
